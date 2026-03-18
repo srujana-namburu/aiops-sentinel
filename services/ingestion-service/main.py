@@ -161,7 +161,11 @@ from dotenv import load_dotenv
 from logger import get_logger
 import os
 import time
-
+from contextlib import asynccontextmanager
+from database import engine, Base, Incident, get_db
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from kafka_producer import send_incident
 # Load env variables
 load_dotenv()
 
@@ -169,8 +173,13 @@ load_dotenv()
 logger = get_logger("ingestion-service")
 
 # Create FastAPI app
-app = FastAPI(title="Ingestion Service")
+#app = FastAPI(title="Ingestion Service")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    yield
 
+app = FastAPI(title="Ingestion Service", lifespan=lifespan)
 # Enable CORS (frontend later)
 app.add_middleware(
     CORSMiddleware,
@@ -241,3 +250,30 @@ def analyze(event: IncidentEvent):
         "analysis": analysis,
         "severity": "high" if event.error_count > 10 else "low"
     }
+@app.post("/incidents")
+def create_incident(event: IncidentEvent):
+
+    send_incident(event.dict())
+
+    return {
+        "message": "Incident sent to processing pipeline",
+        "status": "QUEUED"
+    }
+
+@app.get("/incidents")
+def list_incidents(db: Session = Depends(get_db)):
+    return db.query(Incident).order_by(Incident.created_at.desc()).limit(50).all()
+
+
+@app.get("/incidents/{incident_id}")
+def get_incident(incident_id: str, db: Session = Depends(get_db)):
+    return db.query(Incident).filter(Incident.id == incident_id).first()
+
+@app.get("/incidents/display/{display_id}")
+def get_by_display_id(display_id: int, db: Session = Depends(get_db)):
+    incident = db.query(Incident).filter(Incident.display_id == display_id).first()
+
+    if not incident:
+        return {"error": "Incident not found"}
+
+    return incident
