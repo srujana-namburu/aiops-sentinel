@@ -166,11 +166,22 @@ from database import engine, Base, Incident, get_db
 from fastapi import Depends
 from sqlalchemy.orm import Session
 from kafka_producer import send_incident
+from metrics import incident_counter, request_latency
+from prometheus_client import generate_latest
+from fastapi.responses import Response
+from kafka import KafkaProducer
+import json
 # Load env variables
 load_dotenv()
 
 # Initialize logger
 logger = get_logger("ingestion-service")
+
+# Initialize Kafka producer
+producer = KafkaProducer(
+    bootstrap_servers='localhost:9092',
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
 
 # Create FastAPI app
 #app = FastAPI(title="Ingestion Service")
@@ -251,15 +262,27 @@ def analyze(event: IncidentEvent):
         "severity": "high" if event.error_count > 10 else "low"
     }
 @app.post("/incidents")
-def create_incident(event: IncidentEvent):
+def create_incident(req: IncidentEvent):
+    start_time = time.time()
 
-    send_incident(event.dict())
+    # Increment incident counter
+    incident_counter.inc()
+
+    event = {
+        "service_name": req.service_name,
+        "error_message": req.error_message,
+        "error_count": req.error_count
+    }
+
+    producer.send("incidents", event)
+
+    latency = time.time() - start_time
+    request_latency.observe(latency)
 
     return {
         "message": "Incident sent to processing pipeline",
         "status": "QUEUED"
     }
-
 @app.get("/incidents")
 def list_incidents(db: Session = Depends(get_db)):
     return db.query(Incident).order_by(Incident.created_at.desc()).limit(50).all()
@@ -277,3 +300,7 @@ def get_by_display_id(display_id: int, db: Session = Depends(get_db)):
         return {"error": "Incident not found"}
 
     return incident
+
+@app.get("/metrics")
+def metrics():
+    return Response(generate_latest(), media_type="text/plain")
