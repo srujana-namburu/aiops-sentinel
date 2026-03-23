@@ -1,6 +1,9 @@
+# ai_service.py
+
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
+import json
 
 load_dotenv()
 
@@ -10,29 +13,39 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 def analyze_incident(service_name, error_message, error_count):
     try:
         prompt = f"""
-        You are an SRE expert.
+            Return ONLY valid JSON. No explanation. No markdown.
 
-        Analyze the following incident:
+            Format:
+            {{
+                "root_cause": "string",
+                "severity": "LOW or MEDIUM or HIGH or CRITICAL",
+                "suggested_fix": "string"
+            }}
 
-        Service: {service_name}
-        Error: {error_message}
-        Count: {error_count}
-
-        Provide:
-        1. Root cause
-        2. Severity (LOW, MEDIUM, HIGH, CRITICAL)
-        3. Suggested fix
-        """
+            Incident:
+            Service: {service_name}
+            Error: {error_message}
+            Count: {error_count}
+            """
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an expert SRE assistant."},
+                {"role": "system", "content": "Return only valid JSON."},
                 {"role": "user", "content": prompt}
             ]
         )
 
-        return response.choices[0].message.content
+        content = response.choices[0].message.content.strip()
 
+        # remove ```json if present
+        if content.startswith("```"):
+            content = content.replace("```json", "").replace("```", "").strip()
+
+        return json.loads(content)
     except Exception as e:
-        return f"AI analysis failed: {str(e)}"
+        return {
+            "root_cause": "unknown",
+            "severity": "LOW",
+            "suggested_fix": f"AI failed: {str(e)}"
+        }

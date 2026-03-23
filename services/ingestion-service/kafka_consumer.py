@@ -4,6 +4,7 @@ from kafka import KafkaConsumer
 import json
 from database import SessionLocal, Incident
 from ai_service import analyze_incident
+from decision_engine import decide_action
 
 consumer = KafkaConsumer(
     'incidents-topic',
@@ -30,18 +31,22 @@ def start_consumer():
         event.get("error_count")
     )
 
+        severity = analysis.get("severity", "LOW")
+        decision = decide_action(severity)
+
         inc = Incident(
             service_name=event.get("service_name"),
             error_message=event.get("error_message"),
             error_count=event.get("error_count"),
-            ai_analysis=analysis
+            severity=severity,
+            ai_analysis=str(analysis),
+            sre_decision=decision
         )
-
         db.add(inc)
         db.commit()
         db.refresh(inc)
 
-        print(f"Stored Incident {inc.display_id}")
+        print(f"Stored Incident {inc.display_id} | Severity: {severity} | Decision: {decision}")
 
 
 if __name__ == "__main__":
