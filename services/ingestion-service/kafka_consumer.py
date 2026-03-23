@@ -3,6 +3,7 @@
 from kafka import KafkaConsumer
 import json
 from database import SessionLocal, Incident
+from ai_service import analyze_incident
 
 consumer = KafkaConsumer(
     'incidents-topic',
@@ -23,10 +24,17 @@ def start_consumer():
 
         event = message.value
 
+        analysis = analyze_incident(
+        event.get("service_name"),
+        event.get("error_message"),
+        event.get("error_count")
+    )
+
         inc = Incident(
             service_name=event.get("service_name"),
             error_message=event.get("error_message"),
-            error_count=event.get("error_count")
+            error_count=event.get("error_count"),
+            ai_analysis=analysis
         )
 
         db.add(inc)
